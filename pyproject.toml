@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "home-disconnect"
+dynamic = ["version"]
+description = "Local WebSocket client for Home Connect appliances"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [{ name = "vemboy200" }]
+requires-python = ">=3.13"
+dependencies = []
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Framework :: AsyncIO",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/vemboy200/home-disconnect-rewrite"
+Issues = "https://github.com/vemboy200/home-disconnect-rewrite/issues"
+
+[dependency-groups]
+dev = ["mypy>=1.18", "pytest>=8.4", "pytest-asyncio>=1.2", "pytest-cov>=7.0", "ruff>=0.14"]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/home_disconnect"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+  "COM812", # conflicts with the formatter
+  "CPY001", # the license is repository-wide (LICENSE), not per file
+  "D203",   # conflicts with D211
+  "D213",   # conflicts with D212
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "D"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["home_disconnect"]
