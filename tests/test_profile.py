@@ -23,6 +23,8 @@ def test_features_by_kind_including_nested_lists() -> None:
         "BSH.Common.Setting.PowerState": FeatureKind.SETTING,
         "Dishcare.Dishwasher.Event.SaltNearlyEmpty": FeatureKind.EVENT,
         "BSH.Common.Command.AbortProgram": FeatureKind.COMMAND,
+        "BSH.Common.Command.AcknowledgeEvent": FeatureKind.COMMAND,
+        "BSH.Common.Command.RejectEvent": FeatureKind.COMMAND,
         "BSH.Common.Option.Duration": FeatureKind.OPTION,
         "BSH.Common.Root.ActiveProgram": FeatureKind.ACTIVE_PROGRAM,
         "BSH.Common.Root.SelectedProgram": FeatureKind.SELECTED_PROGRAM,
@@ -90,6 +92,8 @@ def test_programs_with_groups_and_options() -> None:
     assert duration.extra == {"liveUpdate": "true"}
     quick = profile.programs[0x1002]
     assert quick.available is False
+    assert quick.extra == {"fullOptionSet": "false"}
+    assert eco.extra == {}
     assert quick.group is None
     assert quick.options == ()
 

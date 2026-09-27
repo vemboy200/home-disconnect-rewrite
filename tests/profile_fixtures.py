@@ -28,6 +28,8 @@ DESCRIPTION = """<?xml version="1.0" encoding="UTF-8"?>
   </eventList>
   <commandList access="writeOnly" available="true" uid="0105">
     <command access="writeOnly" available="true" refCID="01" refDID="00" uid="0226"/>
+    <command access="writeOnly" available="true" refCID="15" refDID="81" uid="0006"/>
+    <command access="writeOnly" available="true" refCID="15" refDID="81" uid="0007"/>
   </commandList>
   <optionList access="readWrite" available="true" uid="0106">
     <option access="readWrite" available="true" refCID="10" refDID="82" uid="0228"/>
@@ -39,7 +41,7 @@ DESCRIPTION = """<?xml version="1.0" encoding="UTF-8"?>
                 stepSize="10" liveUpdate="true" refUID="0228"/>
       </program>
     </programGroup>
-    <program available="false" execution="startOnly" uid="1002"/>
+    <program available="false" execution="startOnly" fullOptionSet="false" uid="1002"/>
   </programGroup>
   <activeProgram access="readWrite" uid="0100"/>
   <selectedProgram access="readWrite" fullOptionSet="true" uid="0101"/>
@@ -64,6 +66,8 @@ FEATURE_MAPPING = """<?xml version="1.0" encoding="UTF-8"?>
     <feature refUID="0219">BSH.Common.Setting.PowerState</feature>
     <feature refUID="0231">Dishcare.Dishwasher.Event.SaltNearlyEmpty</feature>
     <feature refUID="0226">BSH.Common.Command.AbortProgram</feature>
+    <feature refUID="0006">BSH.Common.Command.AcknowledgeEvent</feature>
+    <feature refUID="0007">BSH.Common.Command.RejectEvent</feature>
     <feature refUID="0228">BSH.Common.Option.Duration</feature>
     <feature refUID="1001">Dishcare.Dishwasher.Program.Eco50</feature>
     <feature refUID="1002">Dishcare.Dishwasher.Program.Quick45</feature>

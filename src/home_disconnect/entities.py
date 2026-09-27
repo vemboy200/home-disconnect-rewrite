@@ -147,6 +147,7 @@ class Entity:
         )
         self._reverse_enum = {name: value for value, name in (self.enum or {}).items()}
         self.value_raw: Any = parse_profile_value(feature.init_value)
+        self._value_shadow: Any = None
 
     def __repr__(self) -> str:
         """Show the name and state, for debugging."""
@@ -174,6 +175,7 @@ class Entity:
         before = self._state()
         if "value" in data:
             self.value_raw = data["value"]
+            self._value_shadow = data["value"]
         if "access" in data:
             self.access = Access.parse(data["access"])
         if "available" in data:
@@ -255,6 +257,17 @@ class Entity:
         await self._requester(
             Message("/ro/values", Action.POST, [{"uid": self.uid, "value": value}])
         )
+        self._value_shadow = value
+
+    @property
+    def value_shadow(self) -> Any:  # noqa: ANN401 - the type depends on the feature
+        """The last raw value the appliance reported or that was written successfully.
+
+        Appliances don't always report a value back after a write (options often don't while
+        no program runs), so `value_raw` can stay behind. This is the value to send again,
+        e.g. when starting a program with the current options.
+        """
+        return self._value_shadow
 
     def dump(self) -> dict[str, Any]:
         """Return the entity's state, for diagnostics."""
@@ -264,6 +277,7 @@ class Entity:
             "type": type(self).__name__,
             "value": self.value,
             "value_raw": self.value_raw,
+            "value_shadow": self.value_shadow,
             "access": self.access,
             "available": self.available,
             "min": self.min,
@@ -284,6 +298,26 @@ class Setting(Entity):
 
 class Event(Entity):
     """An event, like "salt nearly empty". Its value is usually Off/Present/Confirmed."""
+
+    def __init__(self, feature: Feature, requester: Requester, entities: Entities) -> None:
+        """Keep the other entities, to find the acknowledge/reject commands."""
+        super().__init__(feature, requester)
+        self._entities = entities
+
+    async def acknowledge(self) -> None:
+        """Acknowledge the event on the appliance, as its panel or the app would."""
+        await self._run_event_command("BSH.Common.Command.AcknowledgeEvent")
+
+    async def reject(self) -> None:
+        """Reject the event, for events that ask for a decision."""
+        await self._run_event_command("BSH.Common.Command.RejectEvent")
+
+    async def _run_event_command(self, name: str) -> None:
+        command = self._entities.get(name)
+        if not isinstance(command, Command):
+            msg = f"This appliance has no {name}"
+            raise AccessError(msg)
+        await command.execute(value=self.uid)
 
     @property
     def level(self) -> str | None:
@@ -325,6 +359,18 @@ class Program:
     def __repr__(self) -> str:
         """Show the name, for debugging."""
         return f"<Program {self.name} available={self.available}>"
+
+    @property
+    def full_option_set(self) -> bool:
+        """Whether starting or selecting this program must send every option.
+
+        A `fullOptionSet` flag on the program itself wins; otherwise the appliance-wide flag
+        from the selected or active program applies.
+        """
+        own = _parse_bool(self.profile.extra.get("fullOptionSet"))
+        if own is not None:
+            return own
+        return self._entities.full_option_set
 
     @property
     def option_settings(self) -> tuple[ProgramOption, ...]:
@@ -425,7 +471,6 @@ class SelectedProgram(_ProgramRoot):
 _ENTITY_CLASSES: dict[FeatureKind, type[Entity]] = {
     FeatureKind.STATUS: Status,
     FeatureKind.SETTING: Setting,
-    FeatureKind.EVENT: Event,
     FeatureKind.COMMAND: Command,
     FeatureKind.OPTION: Option,
 }
@@ -444,7 +489,9 @@ class Entities:
         self.selected_program: SelectedProgram | None = None
         for feature in profile.features.values():
             entity: Entity
-            if feature.kind is FeatureKind.ACTIVE_PROGRAM:
+            if feature.kind is FeatureKind.EVENT:
+                entity = Event(feature, requester, self)
+            elif feature.kind is FeatureKind.ACTIVE_PROGRAM:
                 entity = self.active_program = ActiveProgram(feature, requester, self)
             elif feature.kind is FeatureKind.SELECTED_PROGRAM:
                 entity = self.selected_program = SelectedProgram(feature, requester, self)
@@ -500,6 +547,18 @@ class Entities:
     def options(self) -> dict[str, Option]:
         """Options by name."""
         return self._of_type(Option)
+
+    @property
+    def full_option_set(self) -> bool:
+        """Whether the appliance wants every option sent with a program.
+
+        True when either the selected or the active program says so: appliances don't always
+        put the flag on both.
+        """
+        return any(
+            root is not None and root.full_option_set
+            for root in (self.selected_program, self.active_program)
+        )
 
     def resolve_options(
         self, options: Mapping[Entity | str | int, Any]
