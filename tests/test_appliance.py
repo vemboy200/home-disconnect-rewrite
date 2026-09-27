@@ -98,7 +98,9 @@ async def test_connect_reads_the_full_state(
         assert appliance.get("BSH.Common.Status.DoorState").value == "Closed"  # type: ignore[union-attr]
         assert appliance.settings["BSH.Common.Setting.PowerState"].value == "On"
         assert appliance.selected_program is not None
-        assert appliance.selected_program.value == "Dishcare.Dishwasher.Program.Eco50"
+        assert appliance.selected_program.name == "Dishcare.Dishwasher.Program.Eco50"
+        assert appliance.entities.selected_program is not None
+        assert appliance.entities.selected_program.value == "Dishcare.Dishwasher.Program.Eco50"
         assert appliance.info["vib"] == "TEST"  # from /ci/info, over the profile's model
         assert appliance.info["deviceID"] == "123"
         assert appliance.info["type"] == "Dishwasher"
@@ -115,7 +117,7 @@ async def test_connect_reads_the_full_state(
         assert appliance.events
         assert appliance.commands
         assert appliance.options
-        assert appliance.active_program is not None
+        assert appliance.active_program is None  # nothing running
     finally:
         await appliance.close()
     assert appliance.state is ConnectionState.CLOSED
