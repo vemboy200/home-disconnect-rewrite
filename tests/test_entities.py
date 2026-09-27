@@ -73,10 +73,16 @@ def test_access_and_execution_parse_any_spelling() -> None:
     assert Access.parse("readWrite") is Access.READ_WRITE
     assert Access.parse("READ") is Access.READ
     assert Access.parse("writeOnly") is Access.WRITE_ONLY
+    assert Access.parse("readStatic") is Access.READ_STATIC
     assert Access.parse("bogus") is None
     assert Access.parse(None) is None
     assert Access.READ_WRITE.writable
     assert not Access.READ.writable
+    assert not Access.READ_STATIC.writable
+    assert Access.READ_STATIC.readable
+    assert Access.READ.readable
+    assert not Access.WRITE_ONLY.readable
+    assert not Access.NONE.readable
     assert Execution.parse("selectAndStart") is Execution.SELECT_AND_START
     assert Execution.parse("startOnly") is Execution.START_ONLY
     assert Execution.parse("bogus") is None
@@ -201,6 +207,9 @@ async def test_invalid_enum_values_are_rejected(entities: Entities, value: Any) 
 
 
 async def test_read_only_and_unavailable_entities_refuse_writes(entities: Entities) -> None:
+    with pytest.raises(AccessError, match="isn't writable"):
+        await entities[DOOR].set_value("Open")
+    entities[DOOR].update({"access": "readStatic"})
     with pytest.raises(AccessError, match="isn't writable"):
         await entities[DOOR].set_value("Open")
     power = entities[POWER]

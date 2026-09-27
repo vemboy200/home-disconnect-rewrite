@@ -55,6 +55,9 @@ class Access(StrEnum):
 
     NONE = "none"
     READ = "read"
+    # Read-only and fixed: the appliance doesn't change it at runtime (e.g. an oven cavity's
+    # size and position, the temperature unit on some appliances).
+    READ_STATIC = "readstatic"
     READ_WRITE = "readwrite"
     WRITE_ONLY = "writeonly"
 
@@ -68,6 +71,11 @@ class Access(StrEnum):
         except ValueError:
             _LOGGER.debug("Unknown access %r", value)
             return None
+
+    @property
+    def readable(self) -> bool:
+        """Whether the entity has a value to read."""
+        return self in (Access.READ, Access.READ_STATIC, Access.READ_WRITE)
 
     @property
     def writable(self) -> bool:
