@@ -19,7 +19,7 @@ from home_disconnect.entities import (
     Status,
     parse_profile_value,
 )
-from home_disconnect.messages import Action, Message
+from home_disconnect.messages import Action, Message, ResponseError
 from home_disconnect.profile import parse_profile
 
 from .profile_fixtures import DESCRIPTION, FEATURE_MAPPING
@@ -29,6 +29,8 @@ PROGRESS = "BSH.Common.Status.ProgramProgress"
 POWER = "BSH.Common.Setting.PowerState"
 SALT = "Dishcare.Dishwasher.Event.SaltNearlyEmpty"
 ABORT = "BSH.Common.Command.AbortProgram"
+ACKNOWLEDGE = "BSH.Common.Command.AcknowledgeEvent"
+REJECT = "BSH.Common.Command.RejectEvent"
 DURATION = "BSH.Common.Option.Duration"
 ECO = "Dishcare.Dishwasher.Program.Eco50"
 QUICK = "Dishcare.Dishwasher.Program.Quick45"
@@ -96,11 +98,11 @@ def test_entity_classes(entities: Entities) -> None:
     assert isinstance(entities[DURATION], Option)
     assert isinstance(entities.active_program, ActiveProgram)
     assert isinstance(entities.selected_program, SelectedProgram)
-    assert len(entities) == 8  # noqa: PLR2004
+    assert len(entities) == 10  # noqa: PLR2004
     assert set(entities.status) == {DOOR, PROGRESS}
     assert set(entities.settings) == {POWER}
     assert set(entities.events) == {SALT}
-    assert set(entities.commands) == {ABORT}
+    assert set(entities.commands) == {ABORT, ACKNOWLEDGE, REJECT}
     assert set(entities.options) == {DURATION}
     assert entities.get("Not.There") is None
 
@@ -334,3 +336,69 @@ def test_dump(entities: Entities) -> None:
     assert dump["entities"][DOOR]["type"] == "Status"
     assert dump["programs"][ECO]["execution"] is Execution.SELECT_AND_START
     assert repr(entities[DOOR]).startswith("<Status BSH.Common.Status.DoorState")
+
+
+async def test_value_shadow_follows_reports_and_successful_writes(entities: Entities) -> None:
+    duration = entities[DURATION]
+    assert duration.value_shadow is None
+    await duration.set_value(45)
+    # The appliance didn't report it back, but the shadow remembers what was written.
+    assert duration.value_raw is None
+    assert duration.value_shadow == 45  # noqa: PLR2004
+    duration.update({"value": 60})
+    assert duration.value_shadow == 60  # noqa: PLR2004
+    assert entities.dump()["entities"][DURATION]["value_shadow"] == 60  # noqa: PLR2004
+
+
+async def test_failed_write_leaves_the_shadow_alone(entities: Entities) -> None:
+    async def refuse(message: Message) -> Message:
+        raise ResponseError(400, message.resource)
+
+    refusing = Entities(parse_profile(DESCRIPTION, FEATURE_MAPPING), refuse)
+    duration = refusing[DURATION]
+    with pytest.raises(ResponseError):
+        await duration.set_value(45)
+    assert duration.value_shadow is None
+    assert entities[DURATION].value_shadow is None
+
+
+async def test_acknowledge_and_reject_events(entities: Entities, recorder: Recorder) -> None:
+    salt = entities[SALT]
+    assert isinstance(salt, Event)
+    await salt.acknowledge()
+    await salt.reject()
+    assert [m.data for m in recorder.sent] == [
+        [{"uid": entities[ACKNOWLEDGE].uid, "value": salt.uid}],
+        [{"uid": entities[REJECT].uid, "value": salt.uid}],
+    ]
+
+
+async def test_acknowledge_without_the_command(recorder: Recorder) -> None:
+    description = DESCRIPTION.replace('uid="0006"', 'uid="0906"')
+    entities = Entities(parse_profile(description, FEATURE_MAPPING), recorder)
+    salt = entities[SALT]
+    assert isinstance(salt, Event)
+    with pytest.raises(AccessError, match=r"no BSH\.Common\.Command\.AcknowledgeEvent"):
+        await salt.acknowledge()
+
+
+def test_full_option_set(recorder: Recorder) -> None:
+    # The fixture has fullOptionSet="true" on the selected program only.
+    entities = Entities(parse_profile(DESCRIPTION, FEATURE_MAPPING), recorder)
+    assert entities.full_option_set
+    assert entities.programs[ECO].full_option_set  # appliance-wide
+    assert not entities.programs[QUICK].full_option_set  # the program's own flag wins
+
+    only_active = DESCRIPTION.replace(
+        '<selectedProgram access="readWrite" fullOptionSet="true"',
+        '<selectedProgram access="readWrite" fullOptionSet="false"',
+    ).replace(
+        '<activeProgram access="readWrite"',
+        '<activeProgram access="readWrite" fullOptionSet="true"',
+    )
+    assert Entities(parse_profile(only_active, FEATURE_MAPPING), recorder).full_option_set
+
+    neither = DESCRIPTION.replace('fullOptionSet="true"', 'fullOptionSet="false"')
+    entities = Entities(parse_profile(neither, FEATURE_MAPPING), recorder)
+    assert not entities.full_option_set
+    assert not entities.programs[ECO].full_option_set

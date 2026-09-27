@@ -114,6 +114,8 @@ class Program:
     execution: str | None = None
     group: str | None = None
     options: tuple[ProgramOption, ...] = ()
+    # Other attributes of the program element, e.g. "fullOptionSet".
+    extra: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,6 +356,11 @@ class _DescriptionParser:
             execution=element.attrib.get("execution"),
             group=group,
             options=tuple(options),
+            extra={
+                k: v
+                for k, v in element.attrib.items()
+                if k not in ("uid", "available", "execution")
+            },
         )
 
 
