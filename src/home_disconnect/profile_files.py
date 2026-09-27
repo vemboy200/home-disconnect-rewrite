@@ -118,6 +118,15 @@ def _parse_connection(data: bytes, file: str) -> ConnectionDetails:
     if not isinstance(raw, dict):
         msg = "isn't a JSON object"
         raise ProfileError(msg, file)
+    return connection_from_mapping(raw, file)
+
+
+def connection_from_mapping(raw: Mapping[str, Any], source: str) -> ConnectionDetails:
+    """Check and build connection details from a profile's JSON fields.
+
+    `source` names where they came from, for error messages.
+    """
+    file = source
     ha_id, connection_type, key = raw.get("haId"), raw.get("connectionType"), raw.get("key")
     if not isinstance(ha_id, str) or not ha_id:
         msg = "has no haId"
@@ -137,7 +146,7 @@ def _parse_connection(data: bytes, file: str) -> ConnectionDetails:
         connection_type=connection_type,
         psk64=key,
         iv64=iv if connection_type == "AES" else None,
-        raw=raw,
+        raw=dict(raw),
     )
 
 
