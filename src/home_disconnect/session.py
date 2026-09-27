@@ -140,6 +140,14 @@ class Session:
             self._tracker.fail_all(ConnectionClosedError(self._transport.close_code))
         await self._set_state(ConnectionState.CLOSED)
 
+    async def drop(self) -> None:
+        """Close the current connection without stopping.
+
+        With `reconnect=True` the session reconnects with backoff, as after any other drop.
+        Used when a connection is up but unusable, e.g. the appliance won't answer.
+        """
+        await self._transport.close()
+
     async def request(self, message: Message) -> Message:
         """Send a request and wait for its response.
 

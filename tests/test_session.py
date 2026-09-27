@@ -323,3 +323,26 @@ async def test_pending_request_fails_when_the_connection_drops(
             await request
     finally:
         await session.close()
+
+
+async def test_drop_reconnects(
+    client_session: aiohttp.ClientSession,
+    appliance: FakeAppliance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_module, "RECONNECT_INITIAL_DELAY", 0.05)
+    back = asyncio.Event()
+
+    async def on_state(state: ConnectionState) -> None:
+        if state is ConnectionState.CONNECTED and appliance.connections > 1:
+            back.set()
+
+    session = make_session(client_session, appliance, on_state_change=on_state)
+    await session.connect()
+    try:
+        await session.drop()
+        await asyncio.wait_for(back.wait(), 5)
+        assert session.connected
+        assert appliance.connections == 2  # noqa: PLR2004
+    finally:
+        await session.close()
