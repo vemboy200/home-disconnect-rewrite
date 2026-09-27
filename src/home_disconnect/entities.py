@@ -342,6 +342,10 @@ class Event(Entity):
         """Keep the other entities, to find the acknowledge/reject commands."""
         super().__init__(feature, requester)
         self._entities = entities
+        # Profiles give events no access attribute; they're read-only states. A
+        # /ro/descriptionChange can still change it.
+        if self.access is None:
+            self.access = Access.READ
 
     async def acknowledge(self) -> None:
         """Acknowledge the event on the appliance, as its panel or the app would."""

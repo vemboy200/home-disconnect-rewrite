@@ -410,3 +410,11 @@ def test_entities_is_a_mapping_of_names(entities: Entities) -> None:
     assert entities.get(DOOR) is entities[DOOR]
     assert dict(entities.items())[POWER] is entities[POWER]
     assert entities.get("Not.There") is None
+
+
+def test_events_are_readable_by_default(entities: Entities) -> None:
+    salt = entities[SALT]
+    assert salt.feature.access is None  # the profile doesn't say
+    assert salt.access is Access.READ
+    salt.update({"access": "none"})
+    assert salt.access is Access.NONE
