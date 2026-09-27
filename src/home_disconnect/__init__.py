@@ -2,6 +2,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
+from .account import AccountError, SignIn, Token, fetch_profiles
 from .appliance import Appliance
 from .entities import (
     Access,
@@ -47,6 +48,7 @@ except PackageNotFoundError:  # pragma: no cover - running from a source tree wi
 __all__ = [
     "Access",
     "AccessError",
+    "AccountError",
     "Action",
     "ActiveProgram",
     "AlreadyConnectedError",
@@ -74,9 +76,12 @@ __all__ = [
     "SelectedProgram",
     "Session",
     "Setting",
+    "SignIn",
     "Status",
+    "Token",
     "__version__",
     "build_profile_zip",
+    "fetch_profiles",
     "load_profiles",
     "load_profiles_from_zip",
     "parse_profile",
