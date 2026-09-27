@@ -20,6 +20,7 @@ A note on honesty: the people writing this have read homeconnect_websocket close
 | `errors.py` | Written for this repository | |
 | `crypto.py` (AES scheme) | Scheme from hcpy's `HCSocket.py` ([hcpy2-0/hcpy](https://github.com/hcpy2-0/hcpy)); code written here | Key derivation, CBC chaining, padding and MAC chaining follow hcpy. Implemented with `cryptography` and the standard library instead of pycryptodome. Checked byte for byte against hcpy's `encrypt`/`decrypt` with the same padding bytes. |
 | `transport.py` (WebSocket, TLS-PSK) | Parameters from hcpy's `HCSocket.py`; code written here | URLs, ports, PSK identity `HCCOM_Local_App`, TLS 1.2 and the `PSK` cipher string come from hcpy's native Python 3.13 TLS-PSK path. The async aiohttp connection is new. |
-| `tests/test_crypto.py`, `tests/test_transport.py` | Written for this repository | |
+| `messages.py` (message envelope, request matching) | Message format from hcpy's `HCDevice.py` ([hcpy2-0/hcpy](https://github.com/hcpy2-0/hcpy)); code written here | Field names, actions, where the session and message IDs come from, and that responses echo the request's `msgID` follow hcpy's `get`/`reply`/`handle_message`. The dataclass, parsing and `RequestTracker` are new. Checked live against a real appliance and the simulator. |
+| `tests/test_crypto.py`, `tests/test_transport.py`, `tests/test_messages.py` | Written for this repository | |
 
 Add a row whenever a module lands, naming its source (written here, hcpy, or Home Connect Local) and, for the last two, the original file.
