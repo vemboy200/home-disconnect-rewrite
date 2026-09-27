@@ -27,9 +27,16 @@ from .errors import (
     DecryptionError,
     HomeDisconnectError,
 )
+from .legacy import serialize_legacy_description
 from .messages import Action, Message, ResponseError
 from .profile import DeviceProfile, ProfileError, parse_profile
-from .profile_files import LoadedProfile, load_profiles, load_profiles_from_zip
+from .profile_files import (
+    LoadedProfile,
+    build_profile_zip,
+    load_profiles,
+    load_profiles_from_zip,
+    profile_filename_stub,
+)
 from .session import ConnectionState, HandshakeError, Session
 
 try:
@@ -69,7 +76,10 @@ __all__ = [
     "Setting",
     "Status",
     "__version__",
+    "build_profile_zip",
     "load_profiles",
     "load_profiles_from_zip",
     "parse_profile",
+    "profile_filename_stub",
+    "serialize_legacy_description",
 ]

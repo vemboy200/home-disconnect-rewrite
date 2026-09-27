@@ -1,4 +1,4 @@
-"""Find and load appliance profiles from a ZIP file, ZIP bytes or a folder.
+"""Find and load appliance profiles from a ZIP file, ZIP bytes or a folder, and build exports.
 
 A profile is three files, as the Home Connect Profile Downloader writes them:
 
@@ -14,7 +14,8 @@ Candidates are checked, not trusted: a broken file is reported by name, and when
 than one candidate for the same file (e.g. `..._DeviceDescription copy.xml`), the exact name
 is tried first and the others only if it's invalid.
 
-These functions read files and are blocking; run them in an executor from async code.
+The loading functions read files and are blocking; run them in an executor from async code.
+`build_profile_zip()` (Home Connect Local's export, vemboy200) builds a ZIP in memory.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from .crypto import decode_key
 from .profile import DeviceProfile, ProfileError, parse_profile
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -321,3 +322,49 @@ def load_profiles_from_zip(data: bytes) -> list[LoadedProfile]:
     except zipfile.BadZipFile as err:
         msg = "isn't a ZIP file"
         raise ProfileError(msg, "upload") from err
+
+
+def profile_filename_stub(brand: str | None, model: str | None) -> str:
+    """Build a `{brand}_{model}` file name, instead of the MAC-based original."""
+    return f"{(brand or 'unknown').lower()}_{model or 'appliance'}"
+
+
+def build_profile_zip(
+    description_xml: str | bytes,
+    feature_mapping_xml: str | bytes,
+    *,
+    stub: str,
+    connection: ConnectionDetails | None = None,
+    info: Mapping[str, Any] | None = None,
+) -> bytes:
+    """Build a profile ZIP that `load_profiles_from_zip()` (and the setup upload) can read.
+
+    Without `connection` it's a "safe" export: only the two XML files, which never contain the
+    key, the MAC or the serial number, so it can be shared (e.g. attached to an issue). With
+    `connection` it also has the `.json` with the key (and IV for AES), in the shape the Home
+    Connect Profile Downloader writes, so it can be imported again. `info` fills the JSON's
+    `brand`, `vib`, `mac` and `type` fields.
+    """
+    description_file = f"{stub}{DESCRIPTION_SUFFIX}.xml"
+    mapping_file = f"{stub}{FEATURE_MAPPING_SUFFIX}.xml"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(description_file, description_xml)
+        archive.writestr(mapping_file, feature_mapping_xml)
+        if connection is not None:
+            details = info or {}
+            profile: dict[str, Any] = {
+                "haId": connection.ha_id,
+                "brand": details.get("brand", ""),
+                "vib": details.get("vib", ""),
+                "mac": details.get("mac", ""),
+                "type": details.get("type", ""),
+                "featureMappingFileName": mapping_file,
+                "deviceDescriptionFileName": description_file,
+                "connectionType": connection.connection_type,
+                "key": connection.psk64,
+            }
+            if connection.iv64:
+                profile["iv"] = connection.iv64
+            archive.writestr(f"{stub}.json", json.dumps(profile, indent=2))
+    return buffer.getvalue()
