@@ -44,6 +44,8 @@ _LOGGER = logging.getLogger(__name__)
 _UPDATE_RESOURCES = ("/ro/values", "/ro/descriptionChange")
 
 APPLIANCE_DATETIME = "BSH.Common.Setting.ApplianceDateTime"
+ALLOW_BACKEND_CONNECTION = "BSH.Common.Setting.AllowBackendConnection"
+BACKEND_CONNECTED = "BSH.Common.Status.BackendConnected"
 START_IN_RELATIVE = "BSH.Common.Option.StartInRelative"
 FINISH_IN_RELATIVE = "BSH.Common.Option.FinishInRelative"
 # Roughly one broadcast cycle of the dryer in fork issue #384, which reports its active program
@@ -228,6 +230,27 @@ class Appliance:
             data.append({"uid": entity.uid, "value": entity.to_raw(value)})
         if data:
             await self.session.request(Message("/ro/values", Action.POST, data))
+
+    @property
+    def cloud_connection_allowed(self) -> bool | None:
+        """Whether the appliance may connect to the Home Connect cloud (`None` if unknown)."""
+        setting = self.entities.get(ALLOW_BACKEND_CONNECTION)
+        return None if setting is None else setting.value
+
+    @property
+    def cloud_connected(self) -> bool | None:
+        """Whether the appliance is connected to the Home Connect cloud right now."""
+        status = self.entities.get(BACKEND_CONNECTED)
+        return None if status is None else status.value
+
+    async def set_cloud_connection(self, *, allowed: bool) -> None:
+        """Allow or block the appliance's connection to the Home Connect cloud.
+
+        This is the "disconnect" in home-disconnect: with `allowed=False` the appliance stops
+        talking to BSH's servers, and the local connection keeps working. Raises
+        `AccessError` on appliances without the `AllowBackendConnection` setting.
+        """
+        await self._entity_for(ALLOW_BACKEND_CONNECTION).set_value(allowed)
 
     async def set_datetime(self, when: datetime) -> None:
         """Set the appliance's clock (`BSH.Common.Setting.ApplianceDateTime`).

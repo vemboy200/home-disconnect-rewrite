@@ -188,3 +188,34 @@ async def test_set_finish_in_fallback_gives_up_when_no_window_opens(
 async def test_wait_until_writable_returns_at_once_when_writable(appliance: Appliance) -> None:
     async with asyncio.timeout(1):
         await appliance.entities.by_uid[LIGHT].wait_until_writable()
+
+
+CLOUD_DESCRIPTION = DESCRIPTION.replace(
+    "  </settingList>",
+    '    <setting access="readWrite" available="true" refCID="01" refDID="00" uid="0003"/>\n'
+    "  </settingList>\n"
+    '  <statusList access="read" available="true" uid="0102">\n'
+    '    <status access="read" available="true" refCID="01" refDID="00" uid="0005"/>\n'
+    "  </statusList>",
+)
+CLOUD_MAPPING = FEATURE_MAPPING.replace(
+    "  </featureDescription>",
+    '    <feature refUID="0003">BSH.Common.Setting.AllowBackendConnection</feature>\n'
+    '    <feature refUID="0005">BSH.Common.Status.BackendConnected</feature>\n'
+    "  </featureDescription>",
+)
+
+
+async def test_cloud_connection(appliance: Appliance, recorder: Recorder) -> None:
+    # Without the setting, there's nothing to toggle.
+    assert appliance.cloud_connection_allowed is None
+    assert appliance.cloud_connected is None
+    with pytest.raises(AccessError, match="AllowBackendConnection"):
+        await appliance.set_cloud_connection(allowed=False)
+
+    appliance.entities = Entities(parse_profile(CLOUD_DESCRIPTION, CLOUD_MAPPING), recorder)
+    appliance.entities.apply([{"uid": 0x0003, "value": True}, {"uid": 0x0005, "value": 1}])
+    assert appliance.cloud_connection_allowed is True
+    assert appliance.cloud_connected is True
+    await appliance.set_cloud_connection(allowed=False)
+    assert recorder.sent == [("/ro/values", [{"uid": 0x0003, "value": False}])]
