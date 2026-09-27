@@ -212,3 +212,30 @@ async def test_unreachable_tls_is_not_an_authentication_error(
         async with asyncio.timeout(5):
             await transport.connect()
     assert not isinstance(raised.value, AuthenticationError)
+
+
+async def test_error_inside_receive_is_a_closed_connection(
+    session: aiohttp.ClientSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # aiohttp answers pings inside receive(); on a half-closed connection that write raises
+    # ClientConnectionResetError instead of receive() returning a close message.
+    async def appliance(websocket: web.WebSocketResponse) -> None:
+        await websocket.receive()
+
+    server = await start_server(appliance)
+    try:
+        transport = Transport(session, "127.0.0.1", PSK64, IV64, port=server.port)
+        await transport.connect()
+        websocket = transport._websocket  # noqa: SLF001
+        assert websocket is not None
+
+        async def broken_receive(*_: object, **__: object) -> None:
+            msg = "Cannot write to closing transport"
+            raise aiohttp.ClientConnectionResetError(msg)
+
+        monkeypatch.setattr(websocket, "receive", broken_receive)
+        with pytest.raises(ConnectionClosedError):
+            await transport.receive()
+        assert not transport.connected
+    finally:
+        await server.close()

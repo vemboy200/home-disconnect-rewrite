@@ -12,6 +12,7 @@ Either way the payload is JSON text; this module only moves text in and out.
 
 from __future__ import annotations
 
+import contextlib
 import ssl
 from typing import TYPE_CHECKING
 
@@ -158,7 +159,15 @@ class Transport:
         AES frame that fails authentication.
         """
         websocket = self._require_open()
-        message = await websocket.receive()
+        try:
+            message = await websocket.receive()
+        except (aiohttp.ClientError, ConnectionError, OSError) as err:
+            # aiohttp answers the appliance's pings inside receive(); when the connection is
+            # already half closed (e.g. after the machine slept and the appliance gave up on
+            # us), that write raises instead of receive() returning a close message.
+            with contextlib.suppress(aiohttp.ClientError, ConnectionError, OSError):
+                await websocket.close()
+            raise ConnectionClosedError(websocket.close_code) from err
         if message.type is aiohttp.WSMsgType.BINARY and self._codec is not None:
             return self._codec.decrypt(message.data)
         if message.type is aiohttp.WSMsgType.TEXT and self._codec is None:

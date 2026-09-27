@@ -438,3 +438,41 @@ async def test_close_during_reconnect_is_immediate(
     await session.close()
     assert loop.time() - start < 0.5  # noqa: PLR2004
     assert session.state.value == "closed"
+
+
+async def test_unexpected_receive_error_reconnects(
+    client_session: aiohttp.ClientSession,
+    appliance: FakeAppliance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # After the machine sleeps, the appliance may already have given up on the connection;
+    # the next receive() fails inside aiohttp. The session must notice and reconnect, not sit
+    # there reporting "connected" (seen on ha-dev: hours without a reconnect).
+    monkeypatch.setattr(session_module, "RECONNECT_INITIAL_DELAY", 0.05)
+    reconnected = asyncio.Event()
+    states: list[ConnectionState] = []
+
+    async def on_state(state: ConnectionState) -> None:
+        states.append(state)
+        if state is ConnectionState.CONNECTED and ConnectionState.RECONNECTING in states:
+            reconnected.set()
+
+    session = make_session(client_session, appliance, on_state_change=on_state)
+    await session.connect()
+    try:
+        transport = session._transport  # noqa: SLF001
+        websocket = transport._websocket  # noqa: SLF001
+        assert websocket is not None
+
+        async def broken_receive(*_: object, **__: object) -> None:
+            msg = "something unexpected"
+            raise RuntimeError(msg)
+
+        monkeypatch.setattr(websocket, "receive", broken_receive)
+        await appliance.send({"sID": SESSION_ID, "msgID": 9, "resource": "/ro/values",
+                              "action": "NOTIFY", "data": []})  # fmt: skip
+        await asyncio.wait_for(reconnected.wait(), 5)
+        assert session.connected
+        assert appliance.connections == 2  # noqa: PLR2004
+    finally:
+        await session.close()
