@@ -8,7 +8,7 @@ import pytest
 from home_disconnect import session as session_module
 from home_disconnect.appliance import Appliance
 from home_disconnect.entities import Entity
-from home_disconnect.errors import ConnectionFailedError
+from home_disconnect.errors import AlreadyConnectedError, ConnectionFailedError
 from home_disconnect.messages import ResponseError
 from home_disconnect.profile import parse_profile
 from home_disconnect.session import ConnectionState
@@ -300,3 +300,17 @@ async def test_state_callback_errors_are_contained(
     await appliance.connect()
     assert appliance.connected
     await appliance.close()
+
+
+async def test_connect_twice_raises_without_dropping_the_connection(
+    client_session: aiohttp.ClientSession, fake: FakeAppliance
+) -> None:
+    appliance = make_appliance(client_session, fake)
+    await appliance.connect()
+    try:
+        with pytest.raises(AlreadyConnectedError):
+            await appliance.connect()
+        assert appliance.connected
+        assert fake.connections == 1
+    finally:
+        await appliance.close()

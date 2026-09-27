@@ -5,7 +5,12 @@ import aiohttp
 import pytest
 
 from home_disconnect import session as session_module
-from home_disconnect.errors import ConnectionClosedError, ConnectionFailedError
+from home_disconnect.errors import (
+    AlreadyConnectedError,
+    AuthenticationError,
+    ConnectionClosedError,
+    ConnectionFailedError,
+)
 from home_disconnect.messages import Action, Message, ResponseError
 from home_disconnect.session import ConnectionState, HandshakeError, Session
 
@@ -346,3 +351,90 @@ async def test_drop_reconnects(
         assert appliance.connections == 2  # noqa: PLR2004
     finally:
         await session.close()
+
+
+async def test_handshake_for_older_appliances(client_session: aiohttp.ClientSession) -> None:
+    # ci and ei version 1, initialValues version 1, no ni.
+    fake = FakeAppliance(services={"ro": 1, "ei": 1, "ci": 1}, initial_version=1)
+    port = await fake.start()
+    session = Session(
+        client_session, "127.0.0.1", PSK64, IV64, app_name="Test", app_id="id", port=port
+    )
+    try:
+        await session.connect()
+        sent = [(m["resource"], m["action"], m["version"]) for m in fake.received]
+        assert sent == [
+            ("/ei/initialValues", "RESPONSE", 1),
+            ("/ci/services", "GET", 1),
+            ("/ci/authentication", "GET", 1),
+            ("/ci/info", "GET", 1),
+        ]
+        assert fake.received[0]["data"][0]["deviceType"] == 2  # noqa: PLR2004
+    finally:
+        await session.close()
+        await fake.stop()
+
+
+async def test_handshake_versions_follow_the_services(
+    client_session: aiohttp.ClientSession, appliance: FakeAppliance
+) -> None:
+    session = make_session(client_session, appliance)
+    await session.connect()
+    try:
+        versions = {m["resource"]: m["version"] for m in appliance.received}
+        assert versions["/ci/authentication"] == 2  # noqa: PLR2004
+        assert versions["/ci/info"] == 2  # noqa: PLR2004
+        assert versions["/ei/deviceReady"] == 2  # noqa: PLR2004
+        assert versions["/ni/info"] == 1
+    finally:
+        await session.close()
+
+
+async def test_wrong_aes_key_is_an_authentication_error(
+    client_session: aiohttp.ClientSession, appliance: FakeAppliance
+) -> None:
+    appliance.psk = bytes(32)
+    session = make_session(client_session, appliance)
+    with pytest.raises(AuthenticationError):
+        await session.connect()
+    assert session.state is ConnectionState.DISCONNECTED
+    await session.close()
+
+
+async def test_connect_twice_raises(
+    client_session: aiohttp.ClientSession, appliance: FakeAppliance
+) -> None:
+    session = make_session(client_session, appliance)
+    await session.connect()
+    try:
+        with pytest.raises(AlreadyConnectedError):
+            await session.connect()
+        assert session.connected
+    finally:
+        await session.close()
+    # Once closed, it can connect again.
+    await session.connect()
+    assert session.connected
+    await session.close()
+
+
+async def test_close_during_reconnect_is_immediate(
+    client_session: aiohttp.ClientSession, appliance: FakeAppliance
+) -> None:
+    # Fork issue #30: closing while the appliance is unreachable mustn't wait out the backoff.
+    reconnecting = asyncio.Event()
+
+    async def on_state(state: ConnectionState) -> None:
+        if state is ConnectionState.RECONNECTING:
+            reconnecting.set()
+
+    session = make_session(client_session, appliance, on_state_change=on_state)
+    await session.connect()
+    appliance.accepting = False
+    await appliance.drop()
+    await asyncio.wait_for(reconnecting.wait(), 5)
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    await session.close()
+    assert loop.time() - start < 0.5  # noqa: PLR2004
+    assert session.state.value == "closed"

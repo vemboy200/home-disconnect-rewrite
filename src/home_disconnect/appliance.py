@@ -16,7 +16,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from .entities import Entities
-from .errors import HomeDisconnectError
+from .errors import AlreadyConnectedError, HomeDisconnectError
 from .messages import Action, Message, ResponseError
 from .session import ConnectionState, Session
 
@@ -151,6 +151,13 @@ class Appliance:
 
         Raises when any of it fails; nothing is left connected in that case.
         """
+        if self.state in (
+            ConnectionState.CONNECTING,
+            ConnectionState.CONNECTED,
+            ConnectionState.RECONNECTING,
+        ):
+            msg = f"Appliance is already {self.state}"
+            raise AlreadyConnectedError(msg)
         self._connecting = True
         await self._set_state(ConnectionState.CONNECTING)
         try:

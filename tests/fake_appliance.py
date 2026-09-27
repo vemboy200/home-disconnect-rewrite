@@ -24,8 +24,10 @@ FIRST_MESSAGE_ID = 1000
 class FakeAppliance:
     """Answers the handshake requests; everything else is up to the test."""
 
-    def __init__(self, services: dict[str, int] | None = None) -> None:
+    def __init__(self, services: dict[str, int] | None = None, initial_version: int = 2) -> None:
         self.services = services or {"ci": 2, "ei": 2, "ni": 1, "ro": 1}
+        self.initial_version = initial_version
+        self.psk = PSK
         self.received: list[dict[str, Any]] = []
         self.responses: dict[str, dict[str, Any]] = {
             "/ci/info": {"data": [{"deviceID": "123", "vib": "TEST"}]},
@@ -80,13 +82,13 @@ class FakeAppliance:
         websocket = web.WebSocketResponse()
         await websocket.prepare(request)
         self.websocket = websocket
-        self.codec = AesCodec(PSK, IV, role="appliance")
+        self.codec = AesCodec(self.psk, IV, role="appliance")
         await self.send(
             {
                 "sID": SESSION_ID,
                 "msgID": 1,
                 "resource": "/ei/initialValues",
-                "version": 2,
+                "version": self.initial_version,
                 "action": "POST",
                 "data": [{"edMsgID": FIRST_MESSAGE_ID}],
             }
@@ -95,7 +97,7 @@ class FakeAppliance:
             message = json.loads(self.codec.decrypt(frame.data))
             self.received.append(message)
             await self._answer(message)
-            if message["resource"] == "/ei/deviceReady":
+            if message["resource"] in ("/ei/deviceReady", "/ci/info", "/iz/info"):
                 self.handshake_done.set()
                 if self.close_after_handshake:
                     await websocket.close()

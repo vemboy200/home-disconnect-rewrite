@@ -11,6 +11,14 @@ class ConnectionFailedError(HomeDisconnectError):
     """The connection to the appliance couldn't be opened."""
 
 
+class AuthenticationError(ConnectionFailedError):
+    """The appliance was reached but rejected the key (or the key/IV is wrong)."""
+
+
+class AlreadyConnectedError(HomeDisconnectError):
+    """`connect()` was called on a connection that's already open or opening."""
+
+
 class ConnectionClosedError(HomeDisconnectError):
     """The connection to the appliance closed or dropped."""
 

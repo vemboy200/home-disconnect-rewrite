@@ -9,7 +9,12 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from home_disconnect.crypto import AesCodec
-from home_disconnect.errors import ConnectionClosedError, ConnectionFailedError, DecryptionError
+from home_disconnect.errors import (
+    AuthenticationError,
+    ConnectionClosedError,
+    ConnectionFailedError,
+    DecryptionError,
+)
 from home_disconnect.transport import PSK_IDENTITY, Transport
 
 PSK = bytes(range(32))
@@ -133,14 +138,14 @@ async def test_tls_psk_exchange(session: aiohttp.ClientSession) -> None:
         await server.close()
 
 
-async def test_tls_psk_wrong_key_fails_to_connect(session: aiohttp.ClientSession) -> None:
+async def test_tls_psk_wrong_key_is_an_authentication_error(session: aiohttp.ClientSession) -> None:
     async def appliance(websocket: web.WebSocketResponse) -> None:
         await websocket.receive()
 
     server = await start_server(appliance, psk_server_context(bytes(32)))
     try:
         transport = Transport(session, "127.0.0.1", PSK64, port=server.port)
-        with pytest.raises(ConnectionFailedError):
+        with pytest.raises(AuthenticationError):
             async with asyncio.timeout(5):
                 await transport.connect()
     finally:
@@ -191,3 +196,19 @@ async def test_close_leaves_the_session_open(session: aiohttp.ClientSession) -> 
         assert not session.closed
     finally:
         await server.close()
+
+
+async def test_unreachable_tls_is_not_an_authentication_error(
+    session: aiohttp.ClientSession,
+) -> None:
+    async def appliance(websocket: web.WebSocketResponse) -> None:
+        await websocket.receive()
+
+    server = await start_server(appliance, psk_server_context())
+    port = server.port
+    await server.close()
+    transport = Transport(session, "127.0.0.1", PSK64, port=port)
+    with pytest.raises(ConnectionFailedError) as raised:
+        async with asyncio.timeout(5):
+            await transport.connect()
+    assert not isinstance(raised.value, AuthenticationError)
