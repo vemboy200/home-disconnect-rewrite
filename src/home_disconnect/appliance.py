@@ -12,6 +12,7 @@ update the entities, and each changed entity's callbacks run once per message.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +23,7 @@ from .session import ConnectionState, Session
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Mapping
+    from datetime import datetime
 
     import aiohttp
 
@@ -40,6 +42,14 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 _UPDATE_RESOURCES = ("/ro/values", "/ro/descriptionChange")
+
+APPLIANCE_DATETIME = "BSH.Common.Setting.ApplianceDateTime"
+START_IN_RELATIVE = "BSH.Common.Option.StartInRelative"
+FINISH_IN_RELATIVE = "BSH.Common.Option.FinishInRelative"
+# Roughly one broadcast cycle of the dryer in fork issue #384, which reports its active program
+# as writable for a moment about every 30 seconds.
+ACTIVE_PROGRAM_WINDOW = 35
+_FINISH_IN_FALLBACK_CODES = (501, 541)
 
 type ConnectionCallback = Callable[[ConnectionState], Awaitable[None]]
 
@@ -203,6 +213,84 @@ class Appliance:
         else:
             msg = f"{program.name} can't be selected or started (execution {program.execution})"
             raise AccessError(msg)
+
+    async def set_values(self, values: Mapping[Entity | str | int, Any]) -> None:
+        """Write several values in one message, each converted and checked like `set_value()`.
+
+        Entities can be given as entities, names or UIDs. Some appliances reject a write that
+        combines certain values (a hood's ambient light refuses a power-on together with a
+        color), so write those one at a time instead.
+        """
+        data: list[dict[str, Any]] = []
+        for key, value in values.items():
+            entity = self._entity_for(key)
+            entity.ensure_writable()
+            data.append({"uid": entity.uid, "value": entity.to_raw(value)})
+        if data:
+            await self.session.request(Message("/ro/values", Action.POST, data))
+
+    async def set_datetime(self, when: datetime) -> None:
+        """Set the appliance's clock (`BSH.Common.Setting.ApplianceDateTime`).
+
+        The appliance wants its local time as a naive ISO 8601 timestamp, so pass the local
+        time; a time zone on `when` is dropped, not converted.
+        """
+        clock = self._entity_for(APPLIANCE_DATETIME)
+        await clock.set_value(when.replace(tzinfo=None, microsecond=0).isoformat())
+
+    async def set_start_in(self, seconds: int) -> None:
+        """Delay the selected program's start by `seconds` (`StartInRelative`)."""
+        await self._entity_for(START_IN_RELATIVE).set_value(seconds)
+
+    async def set_finish_in(self, seconds: int) -> None:
+        """Make the selected program finish in `seconds` (`FinishInRelative`).
+
+        Some appliances refuse `FinishInRelative` on its own (a Siemens dryer, fork issue
+        #384, answers 501 or 541) and only accept it together with the active program, while
+        the active program is briefly writable. For those two codes this waits for that
+        window (up to `ACTIVE_PROGRAM_WINDOW` seconds) and writes both in one message.
+        """
+        finish_in = self._entity_for(FINISH_IN_RELATIVE)
+        try:
+            await finish_in.set_value(seconds)
+        except ResponseError as err:
+            if err.code not in _FINISH_IN_FALLBACK_CODES:
+                raise
+        else:
+            return
+        root = self.entities.active_program
+        program = self.selected_program
+        if root is None or program is None:
+            msg = "No program is selected"
+            raise AccessError(msg) from None
+        try:
+            async with asyncio.timeout(ACTIVE_PROGRAM_WINDOW):
+                await root.wait_until_writable()
+        except TimeoutError:
+            msg = "The appliance didn't open a window to set the finish time"
+            raise AccessError(msg) from None
+        await self.session.request(
+            Message(
+                "/ro/values",
+                Action.POST,
+                [
+                    {"uid": finish_in.uid, "value": finish_in.to_raw(seconds)},
+                    {"uid": root.uid, "value": program.uid},
+                ],
+            )
+        )
+
+    def _entity_for(self, key: Entity | str | int) -> Entity:
+        if isinstance(key, int):
+            entity = self.entities.by_uid.get(key)
+        elif isinstance(key, str):
+            entity = self.entities.get(key)
+        else:
+            entity = key
+        if entity is None:
+            msg = f"This appliance has no {key}"
+            raise AccessError(msg)
+        return entity
 
     @staticmethod
     def _ensure_selectable(root: SelectedProgram | None) -> None:

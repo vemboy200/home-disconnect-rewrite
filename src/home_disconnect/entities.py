@@ -19,6 +19,7 @@ THIRD_PARTY_NOTICES.md, for both message formats).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from enum import StrEnum
@@ -260,6 +261,27 @@ class Entity:
         if self.available is False:
             msg = f"{self.name} isn't available right now"
             raise AccessError(msg)
+
+    async def wait_until_writable(self) -> None:
+        """Wait until the appliance reports the entity writable.
+
+        Some appliances only open short write windows: a dryer's active program, for one,
+        flips to read-write for a moment roughly every 30 seconds. There's no timeout here;
+        wrap the call in `asyncio.timeout`.
+        """
+        if self.access is not None and self.access.writable:
+            return
+        writable = asyncio.Event()
+
+        async def on_change(_: Entity) -> None:
+            if self.access is not None and self.access.writable:
+                writable.set()
+
+        self.register_callback(on_change)
+        try:
+            await writable.wait()
+        finally:
+            self.unregister_callback(on_change)
 
     async def set_value(self, value: Any) -> None:  # noqa: ANN401
         """Write a value (an enum name, a bool, a number) after checking access and range."""
