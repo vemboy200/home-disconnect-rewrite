@@ -6,9 +6,10 @@ The handshake follows hcpy (MIT, see THIRD_PARTY_NOTICES.md):
    message ID. We answer with our device type, name and ID.
 2. `/ci/services` lists the services and their versions.
 3. Appliances with the `iz` service identify themselves through `/iz/info`. The others want
-   `/ci/authentication` with a random nonce, then answer `/ci/info`.
-4. `/ei/deviceReady` (a NOTIFY) tells the appliance we're ready. Some appliances refuse `/ni/`
-   requests without it.
+   `/ci/authentication` with a random nonce, then answer `/ci/info`. Both use the appliance's
+   own `ci` version.
+4. `/ei/deviceReady` (a NOTIFY) tells appliances with `ei` version 2 that we're ready. Some
+   refuse `/ni/` requests without it. Appliances with `ei` version 1 don't get it.
 5. `/ni/info`, if the appliance has the `ni` service, returns network details.
 
 After that the session is connected. Reading the appliance's values is up to the layer above.
@@ -24,7 +25,14 @@ import os
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from .errors import ConnectionClosedError, ConnectionFailedError, HomeDisconnectError
+from .errors import (
+    AlreadyConnectedError,
+    AuthenticationError,
+    ConnectionClosedError,
+    ConnectionFailedError,
+    DecryptionError,
+    HomeDisconnectError,
+)
 from .messages import Action, Message, RequestTracker, ResponseError
 from .transport import Transport
 
@@ -115,6 +123,13 @@ class Session:
 
         With `reconnect=True`, a connection that later drops is reopened in the background.
         """
+        if self.state in (
+            ConnectionState.CONNECTING,
+            ConnectionState.CONNECTED,
+            ConnectionState.RECONNECTING,
+        ):
+            msg = f"Session is already {self.state}"
+            raise AlreadyConnectedError(msg)
         self._closing = False
         await self._set_state(ConnectionState.CONNECTING)
         try:
@@ -187,7 +202,12 @@ class Session:
         """Open the transport, run the handshake and start the receive loop."""
         await self._transport.connect()
         async with asyncio.timeout(HANDSHAKE_TIMEOUT):
-            initial = Message.from_json(await self._transport.receive())
+            try:
+                initial = Message.from_json(await self._transport.receive())
+            except DecryptionError as err:
+                # With AES, a wrong key or IV shows up as the first frame failing its MAC.
+                msg = "The appliance's first message didn't decrypt; the key or IV is wrong"
+                raise AuthenticationError(msg) from err
             if initial.resource != "/ei/initialValues" or not initial.data:
                 msg = f"Expected /ei/initialValues first, got {initial.resource}"
                 raise HandshakeError(msg)
@@ -223,18 +243,20 @@ class Session:
             tracker = self._require_tracker()
             tracker.service_versions = self.service_versions
 
+            # Requests use each service's own version (see RequestTracker), so older
+            # appliances with ci/ei version 1 get version 1 messages.
             if "iz" in self.service_versions:
                 info = await self.request(Message("/iz/info"))
             else:
                 nonce = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
-                await self.request(
-                    Message("/ci/authentication", Action.GET, [{"nonce": nonce}], version=2)
-                )
+                await self.request(Message("/ci/authentication", Action.GET, [{"nonce": nonce}]))
                 info = await self.request(Message("/ci/info"))
             if info.data:
                 self.device_info = dict(info.data[0])
 
-            await self.send(Message("/ei/deviceReady", Action.NOTIFY, version=2))
+            # Only appliances with ei version 2 expect deviceReady.
+            if self.service_versions.get("ei", 1) >= 2:  # noqa: PLR2004
+                await self.send(Message("/ei/deviceReady", Action.NOTIFY))
 
             if "ni" in self.service_versions:
                 try:
@@ -297,6 +319,8 @@ class Session:
 
 
 __all__ = [
+    "AlreadyConnectedError",
+    "AuthenticationError",
     "ConnectionClosedError",
     "ConnectionFailedError",
     "ConnectionState",

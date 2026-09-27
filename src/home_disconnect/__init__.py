@@ -20,6 +20,8 @@ from .entities import (
     Status,
 )
 from .errors import (
+    AlreadyConnectedError,
+    AuthenticationError,
     ConnectionClosedError,
     ConnectionFailedError,
     DecryptionError,
@@ -40,7 +42,9 @@ __all__ = [
     "AccessError",
     "Action",
     "ActiveProgram",
+    "AlreadyConnectedError",
     "Appliance",
+    "AuthenticationError",
     "Command",
     "ConnectionClosedError",
     "ConnectionFailedError",

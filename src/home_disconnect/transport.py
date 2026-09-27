@@ -19,7 +19,12 @@ import aiohttp
 from yarl import URL
 
 from .crypto import AesCodec, decode_key
-from .errors import ConnectionClosedError, ConnectionFailedError, HomeDisconnectError
+from .errors import (
+    AuthenticationError,
+    ConnectionClosedError,
+    ConnectionFailedError,
+    HomeDisconnectError,
+)
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -116,8 +121,24 @@ class Transport:
                 self.url, ssl=self._ssl, heartbeat=self._heartbeat
             )
         except (aiohttp.ClientError, OSError, TimeoutError) as err:
+            if self._rejected_psk(err):
+                msg = f"{self.url} rejected the key during the TLS handshake: {err}"
+                raise AuthenticationError(msg) from err
             msg = f"Can't connect to {self.url}: {err}"
             raise ConnectionFailedError(msg) from err
+
+    def _rejected_psk(self, err: BaseException) -> bool:
+        """Whether a TLS-PSK connect failed in the handshake, i.e. after TCP connected.
+
+        A wrong PSK ends the TLS handshake with an SSL error or a reset. A refused
+        connection, a timeout or an unreachable host is a network problem instead.
+        """
+        if self._codec is not None:
+            return False
+        if isinstance(err, (aiohttp.ClientSSLError, ssl.SSLError)):
+            return True
+        cause = getattr(err, "os_error", None) or err.__cause__
+        return isinstance(cause, (ssl.SSLError, ConnectionResetError))
 
     async def send(self, message: str) -> None:
         """Send one JSON text message."""
