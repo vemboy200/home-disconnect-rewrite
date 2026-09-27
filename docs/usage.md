@@ -117,10 +117,12 @@ await appliance.settings["BSH.Common.Setting.PowerState"].set_value("Off")  # en
 await appliance.settings["BSH.Common.Setting.ChildLock"].set_value(True)
 
 # Several values in one message:
-await appliance.set_values({
-    "Cooking.Common.Setting.Lighting": True,
-    "Cooking.Common.Setting.LightingBrightness": 80,
-})
+await appliance.set_values(
+    {
+        "Cooking.Common.Setting.Lighting": True,
+        "Cooking.Common.Setting.LightingBrightness": 80,
+    }
+)
 ```
 
 `set_value()` checks access and availability (`AccessError`), converts enum names, requires real booleans, and range-checks numbers (`InvalidValueError`) before anything is sent. `set_value_raw()` skips the checks.
@@ -164,6 +166,7 @@ await appliance.start_program(options={"BSH.Common.Option.FinishInRelative": 360
 async def door_changed(entity) -> None:
     print(entity.name, entity.value)
 
+
 door.register_callback(door_changed)
 door.unregister_callback(door_changed)
 ```
@@ -174,6 +177,7 @@ A callback runs once per message that changes the entity (value, access, availab
 
 ```python
 from home_disconnect import ConnectionState
+
 
 async def on_state(state: ConnectionState) -> None:
     print(state)  # CONNECTING, CONNECTED, RECONNECTING, DISCONNECTED, CLOSED
@@ -217,8 +221,10 @@ safe = build_profile_zip(loaded.description_xml, loaded.feature_mapping_xml, stu
 
 # Full: also the JSON with the key, so it can be loaded again.
 full = build_profile_zip(
-    loaded.description_xml, loaded.feature_mapping_xml,
-    stub=stub, connection=loaded.connection,
+    loaded.description_xml,
+    loaded.feature_mapping_xml,
+    stub=stub,
+    connection=loaded.connection,
     info={"brand": "THERMADOR", "vib": "DWHD660WFP", "type": "Dishwasher"},
 )
 ```
