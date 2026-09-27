@@ -2,11 +2,9 @@
 
 home-disconnect is MIT licensed (see [LICENSE](LICENSE)). Parts of it are based on the MIT-licensed projects below, whose copyright and permission notices have to travel with that code. Which files use which project is listed in [PROVENANCE.md](PROVENANCE.md).
 
-No code from either project is in the repository yet; the notices are here so they're in place when it is.
-
 ## hcpy
 
-Source: <https://github.com/osresearch/hcpy> (continued at <https://github.com/hcpy2-0/hcpy>). Used as a reference for the encryption and WebSocket protocol.
+Source: <https://github.com/hcpy2-0/hcpy>, the maintained continuation of <https://github.com/osresearch/hcpy> (same license and copyright holders). The AES scheme in `crypto.py` and the connection parameters in `transport.py` are based on its `HCSocket.py`.
 
 ```text
 MIT License
