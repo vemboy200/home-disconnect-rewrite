@@ -62,9 +62,15 @@ class Transport:
         iv64: str | None = None,
         *,
         port: int | None = None,
+        heartbeat: float | None = 20,
     ) -> None:
-        """Pick the scheme from the profile: an IV means AES, no IV means TLS-PSK."""
+        """Pick the scheme from the profile: an IV means AES, no IV means TLS-PSK.
+
+        `heartbeat` is the WebSocket ping interval in seconds; the connection closes when a
+        ping goes unanswered. `None` turns it off.
+        """
         self._session = session
+        self._heartbeat = heartbeat
         psk = decode_key(psk64)
         self._codec: AesCodec | None
         self._ssl: ssl.SSLContext | bool
@@ -106,7 +112,9 @@ class Transport:
         if self._codec is not None:
             self._codec.reset()
         try:
-            self._websocket = await self._session.ws_connect(self.url, ssl=self._ssl)
+            self._websocket = await self._session.ws_connect(
+                self.url, ssl=self._ssl, heartbeat=self._heartbeat
+            )
         except (aiohttp.ClientError, OSError, TimeoutError) as err:
             msg = f"Can't connect to {self.url}: {err}"
             raise ConnectionFailedError(msg) from err
