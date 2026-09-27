@@ -101,7 +101,7 @@ appliance.settings["BSH.Common.Setting.PowerState"].value  # "On"
 appliance.get("BSH.Common.Option.RemainingProgramTime")  # any entity by name, or None
 ```
 
-The collections: `status`, `settings`, `events`, `commands`, `options`, `programs`, and `appliance.entities` for everything (by name or UID).
+The collections: `status`, `settings`, `events`, `commands`, `options`, `programs`, and `appliance.entities` for everything: a read-only mapping of name to entity (`name in appliance.entities`, `.get()`, `.items()`), with `appliance.entities.by_uid` for lookups by UID.
 
 - **Enums** come as names in `value` and as numbers in `value_raw`; `enum` has the whole mapping.
 - **Booleans** are always `bool`, even when the appliance sends `0`/`1`.
