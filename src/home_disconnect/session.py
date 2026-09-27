@@ -282,6 +282,10 @@ class Session:
                         _LOGGER.exception("Error in message callback for %s", message.resource)
         except HomeDisconnectError as err:
             error = err
+        except Exception as err:  # noqa: BLE001 - any failure here means the connection is gone
+            _LOGGER.warning("Unexpected error in the receive loop: %r", err)
+            error = ConnectionClosedError(self._transport.close_code)
+            error.__cause__ = err
         tracker.fail_all(error)
         await self._transport.close()
         if self._closing:
