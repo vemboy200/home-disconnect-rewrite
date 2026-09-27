@@ -267,6 +267,16 @@ class Appliance:
         """
         await self._entity_for(ALLOW_BACKEND_CONNECTION).set_value(allowed)
 
+    async def set_values_raw(self, values: Mapping[Entity | str | int, Any]) -> None:
+        """Write several raw values in one message, without converting or checking them.
+
+        For callers that already hold the appliance's raw values (e.g. a color as the
+        appliance encodes it). Prefer `set_values()` otherwise.
+        """
+        data = [{"uid": self._entity_for(key).uid, "value": value} for key, value in values.items()]
+        if data:
+            await self.session.request(Message("/ro/values", Action.POST, data))
+
     async def set_datetime(self, when: datetime) -> None:
         """Set the appliance's clock (`BSH.Common.Setting.ApplianceDateTime`).
 
