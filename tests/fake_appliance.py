@@ -39,6 +39,7 @@ class FakeAppliance:
         self.handshake_done = asyncio.Event()
         self.close_after_handshake = False
         self.accepting = True
+        self._connected = asyncio.Condition()
         self.server: TestServer | None = None
 
     async def start(self) -> int:
@@ -61,6 +62,10 @@ class FakeAppliance:
         assert self.codec is not None
         await self.websocket.send_bytes(self.codec.encrypt(json.dumps(payload)))
 
+    async def wait_for_connections(self, count: int) -> None:
+        async with self._connected:
+            await self._connected.wait_for(lambda: self.connections >= count)
+
     async def drop(self) -> None:
         assert self.websocket is not None
         await self.websocket.close()
@@ -69,6 +74,8 @@ class FakeAppliance:
         if not self.accepting:
             return web.Response(status=503)
         self.connections += 1
+        async with self._connected:
+            self._connected.notify_all()
         self.handshake_done.clear()
         websocket = web.WebSocketResponse()
         await websocket.prepare(request)
