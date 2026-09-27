@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from .errors import HomeDisconnectError
 from .messages import Action, Message
@@ -128,6 +128,11 @@ def _parse_bool(value: Any) -> bool | None:  # noqa: ANN401
 
 class Entity:
     """One feature of the appliance with its live state."""
+
+    # Whether the appliance locks this kind of entity read-only (instead of hiding it) while it
+    # can't be changed, e.g. options while a program runs or the selected program while a
+    # delayed start is armed. The official app shows those as visible but disabled.
+    lockable: ClassVar[bool] = False
 
     def __init__(self, feature: Feature, requester: Requester) -> None:
         """Start from the profile's values; the appliance's messages update them."""
@@ -238,6 +243,15 @@ class Entity:
             msg = f"{value} is above the maximum {high} of {self.name}"
             raise InvalidValueError(msg)
 
+    @property
+    def locked(self) -> bool:
+        """Whether the entity is locked read-only right now (lockable and access `READ`).
+
+        `READ` means "readable, just not writable right now"; `NONE` means "doesn't apply at
+        the moment", which isn't a lock.
+        """
+        return self.lockable and self.access is Access.READ
+
     def ensure_writable(self) -> None:
         """Raise `AccessError` unless the entity can be written right now."""
         if self.access is None or not self.access.writable:
@@ -295,6 +309,8 @@ class Status(Entity):
 class Setting(Entity):
     """An appliance setting, like the power state or child lock."""
 
+    lockable = True
+
 
 class Event(Entity):
     """An event, like "salt nearly empty". Its value is usually Off/Present/Confirmed."""
@@ -341,6 +357,8 @@ class Command(Entity):
 class Option(Entity):
     """An option a program can take, like the duration or the temperature."""
 
+    lockable = True
+
 
 class Program:
     """A program the appliance can run."""
@@ -351,7 +369,9 @@ class Program:
         self.uid = program.uid
         self.name = program.name
         self.available = program.available
-        self.execution = Execution.parse(program.execution)
+        # Profiles leave execution out on some appliances (every program of the dishwashers
+        # seen so far); those programs are selected and started like selectAndStart ones.
+        self.execution = Execution.parse(program.execution) or Execution.SELECT_AND_START
         self._requester = requester
         self._entities = entities
         self._callbacks: list[EntityCallback] = []
@@ -388,12 +408,12 @@ class Program:
 
     def update(self, data: Mapping[str, Any]) -> bool:
         """Apply a `/ro/descriptionChange` item for this program. Returns whether it changed."""
-        if "available" not in data:
-            return False
-        available = _parse_bool(data["available"])
-        changed = available != self.available
-        self.available = available
-        return changed
+        before = (self.available, self.execution)
+        if "available" in data:
+            self.available = _parse_bool(data["available"])
+        if "execution" in data:
+            self.execution = Execution.parse(data["execution"]) or self.execution
+        return (self.available, self.execution) != before
 
     def register_callback(self, callback: EntityCallback) -> None:
         """Call `callback(program)` after every change."""
@@ -412,22 +432,110 @@ class Program:
             except Exception:
                 _LOGGER.exception("Error in callback for %s", self.name)
 
-    def _payload(self, options: Mapping[Entity | str | int, Any] | None) -> list[dict[str, Any]]:
+    def _payload(
+        self,
+        options: Mapping[Entity | str | int, Any] | None,
+        raw_options: Mapping[int, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         item: dict[str, Any] = {"program": self.uid}
-        if options is not None:
-            item["options"] = [
-                {"uid": option.uid, "value": option.to_raw(value)}
-                for option, value in self._entities.resolve_options(options)
-            ]
+        if options is not None or raw_options is not None:
+            values = dict(raw_options or {})
+            for option, value in self._entities.resolve_options(options or {}):
+                values[option.uid] = option.to_raw(value)
+            item["options"] = [{"uid": uid, "value": value} for uid, value in values.items()]
         return [item]
 
-    async def select(self, options: Mapping[Entity | str | int, Any] | None = None) -> None:
-        """Select this program, optionally with option values."""
-        await self._requester(Message("/ro/selectedProgram", Action.POST, self._payload(options)))
+    async def select(
+        self,
+        options: Mapping[Entity | str | int, Any] | None = None,
+        *,
+        raw_options: Mapping[int, Any] | None = None,
+    ) -> None:
+        """Select this program with exactly the given options (none if `None`).
 
-    async def start(self, options: Mapping[Entity | str | int, Any] | None = None) -> None:
-        """Start this program, optionally with option values."""
-        await self._requester(Message("/ro/activeProgram", Action.POST, self._payload(options)))
+        `options` values are converted and checked; `raw_options` ({uid: raw value}) are sent
+        as they are, underneath `options`. `Appliance.select_program()` picks the options for
+        you.
+        """
+        message = Message("/ro/selectedProgram", Action.POST, self._payload(options, raw_options))
+        await self._requester(message)
+
+    async def start(
+        self,
+        options: Mapping[Entity | str | int, Any] | None = None,
+        *,
+        raw_options: Mapping[int, Any] | None = None,
+    ) -> None:
+        """Start this program with exactly the given options (none if `None`).
+
+        Like `select()`. `Appliance.start_program()` picks the options for you.
+        """
+        message = Message("/ro/activeProgram", Action.POST, self._payload(options, raw_options))
+        await self._requester(message)
+
+    def writable_options(self) -> list[Option]:
+        """Return the options that may go into a write of this program right now.
+
+        Leaves out options that aren't read-write, that the appliance doesn't offer at the
+        moment (a coffee maker lists DisplayName on every beverage but never offers it, and
+        sending any value rejects the whole write), and a meat probe setpoint while no probe is
+        plugged in (which also rejects the whole write).
+        """
+        return [
+            option
+            for option in self.options
+            if option.access is Access.READ_WRITE
+            and option.available is not False
+            and not self._entities.is_unplugged_probe(option)
+        ]
+
+    def _in_program_range(self, option: Option, value: Any) -> bool:  # noqa: ANN401
+        """Whether a value fits this program's own range for the option, when it has one.
+
+        A shared option can allow different values per program; a value left over from another
+        program can be out of range here, and the appliance rejects the whole write.
+        """
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return True
+        setting = next((s for s in self.profile.options if s.uid == option.uid), None)
+        if setting is None:
+            return True
+        low, high = parse_profile_value(setting.min), parse_profile_value(setting.max)
+        if isinstance(low, (int, float)) and value < low:
+            return False
+        return not (isinstance(high, (int, float)) and value > high)
+
+    def known_option_values(self) -> dict[int, Any]:
+        """Return the writable options' last known raw values, for a program write.
+
+        Options without a known value are left out: sent as `null`, the appliance rejects the
+        whole write. So are values outside this program's own range for the option.
+        """
+        values: dict[int, Any] = {}
+        for option in self.writable_options():
+            value = option.value_shadow
+            if value is not None and self._in_program_range(option, value):
+                values[option.uid] = value
+        return values
+
+    def full_option_values(self) -> dict[int, Any]:
+        """Return a complete option set, for appliances that want every option in a program write.
+
+        Starts from the known values, then fills the gaps with this program's own default for
+        the option, then the option's minimum. Options with none of those are left out rather
+        than sent as `null`.
+        """
+        values = self.known_option_values()
+        defaults = {s.uid: parse_profile_value(s.default) for s in self.profile.options}
+        for option in self.writable_options():
+            if option.uid in values:
+                continue
+            default = defaults.get(option.uid)
+            if default is not None and self._in_program_range(option, default):
+                values[option.uid] = default
+            elif isinstance(option.min, (int, float)) and not isinstance(option.min, bool):
+                values[option.uid] = int(option.min)
+        return values
 
 
 class _ProgramRoot(Entity):
@@ -466,6 +574,9 @@ class ActiveProgram(_ProgramRoot):
 
 class SelectedProgram(_ProgramRoot):
     """The program that's selected but not (yet) running."""
+
+    # Locked while e.g. a delayed start is armed (fork issue #59).
+    lockable = True
 
 
 _ENTITY_CLASSES: dict[FeatureKind, type[Entity]] = {
@@ -559,6 +670,13 @@ class Entities:
             root is not None and root.full_option_set
             for root in (self.selected_program, self.active_program)
         )
+
+    def is_unplugged_probe(self, option: Option) -> bool:
+        """Whether an option is a meat probe setpoint while no probe is plugged in."""
+        if "MeatProbeTemperature" not in option.name:
+            return False
+        plugged = self.by_name.get("Cooking.Oven.Status.MeatprobePlugged")
+        return plugged is None or plugged.value is not True
 
     def resolve_options(
         self, options: Mapping[Entity | str | int, Any]

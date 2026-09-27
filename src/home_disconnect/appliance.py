@@ -15,18 +15,17 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from .entities import Entities
+from .entities import AccessError, Entities, Execution
 from .errors import AlreadyConnectedError, HomeDisconnectError
 from .messages import Action, Message, ResponseError
 from .session import ConnectionState, Session
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterable
+    from collections.abc import Awaitable, Callable, Iterable, Mapping
 
     import aiohttp
 
     from .entities import (
-        ActiveProgram,
         Command,
         Entity,
         Event,
@@ -137,14 +136,82 @@ class Appliance:
         return self.entities.programs
 
     @property
-    def active_program(self) -> ActiveProgram | None:
-        """The active program entity."""
-        return self.entities.active_program
+    def active_program(self) -> Program | None:
+        """The program that's running, if any; the entity is `entities.active_program`."""
+        root = self.entities.active_program
+        return root.program if root is not None else None
 
     @property
-    def selected_program(self) -> SelectedProgram | None:
-        """The selected program entity."""
-        return self.entities.selected_program
+    def selected_program(self) -> Program | None:
+        """The selected program, if any; the entity is `entities.selected_program`."""
+        root = self.entities.selected_program
+        return root.program if root is not None else None
+
+    async def start_program(
+        self,
+        program: Program | None = None,
+        options: Mapping[Entity | str | int, Any] | None = None,
+        *,
+        include_current_options: bool = True,
+    ) -> None:
+        """Start a program (by default the selected one) with the right set of options.
+
+        On appliances that want every option in a program write (`full_option_set`), that's
+        the complete set; otherwise the options with a known value. `options` go on top (e.g.
+        `{"BSH.Common.Option.FinishInRelative": 3600}` for a delayed start).
+        `include_current_options=False` sends only `options` on appliances that don't need a
+        full set (a hood's fan, for one, starts its venting program without them).
+        """
+        program = program or self.selected_program
+        if program is None:
+            msg = "No program is selected"
+            raise AccessError(msg)
+        if program.full_option_set:
+            current = program.full_option_values()
+        elif include_current_options:
+            current = program.known_option_values()
+        else:
+            current = {}
+        await program.start(options, raw_options=current)
+
+    async def select_program(self, program: Program) -> None:
+        """Select a program the way the appliance expects it.
+
+        - Appliances whose selected program wants a full option set get the program with a
+          complete option set. A select-only program is selected; otherwise it's started,
+          because such appliances reject a bare select. Only the selected program's own flag
+          counts here: a coffee maker that flags just its active program would otherwise brew
+          on every selection.
+        - Otherwise a program that can be selected is selected without options, so the
+          appliance applies its own defaults instead of a value left over from another program
+          that may be out of range for this one (fork issue #9).
+        - A start-only program is started with its known option values.
+        """
+        root = self.entities.selected_program
+        if root is not None and root.full_option_set:
+            options = program.full_option_values()
+            if program.execution is Execution.SELECT_ONLY:
+                self._ensure_selectable(root)
+                await program.select(raw_options=options)
+            else:
+                await program.start(raw_options=options)
+        elif program.execution in (Execution.SELECT_ONLY, Execution.SELECT_AND_START):
+            self._ensure_selectable(root)
+            await program.select()
+        elif program.execution is Execution.START_ONLY:
+            await program.start(raw_options=program.known_option_values())
+        else:
+            msg = f"{program.name} can't be selected or started (execution {program.execution})"
+            raise AccessError(msg)
+
+    @staticmethod
+    def _ensure_selectable(root: SelectedProgram | None) -> None:
+        if root is not None and root.locked:
+            msg = (
+                "The appliance isn't accepting a program selection right now (the selected "
+                "program is read-only, e.g. while it's off or a delayed start is armed)"
+            )
+            raise AccessError(msg)
 
     async def connect(self) -> None:
         """Connect, run the handshake and read the appliance's full state.

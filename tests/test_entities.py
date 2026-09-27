@@ -278,10 +278,8 @@ async def test_select_and_start(entities: Entities, recorder: Recorder) -> None:
             [
                 {
                     "program": eco.uid,
-                    "options": [
-                        {"uid": duration.uid, "value": 60},
-                        {"uid": duration.uid, "value": 120},
-                    ],
+                    # The same option given twice: the last value wins.
+                    "options": [{"uid": duration.uid, "value": 120}],
                 }
             ],
         ),

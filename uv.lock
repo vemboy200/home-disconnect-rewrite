@@ -471,7 +471,7 @@ wheels = [
 
 [[package]]
 name = "home-disconnect"
-version = "0.1.dev16+g2d55002d7.d20260927"
+version = "0.1.dev22+g93cf624a6.d20260927"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
