@@ -46,6 +46,7 @@ ignore = [
   "CPY001", # the license is repository-wide (LICENSE), not per file
   "D203",   # conflicts with D211
   "D213",   # conflicts with D212
+  "PLR0913", # connection classes take many keyword-only settings
 ]
 
 [tool.ruff.lint.per-file-ignores]
