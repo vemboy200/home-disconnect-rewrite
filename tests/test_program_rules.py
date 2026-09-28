@@ -160,6 +160,13 @@ def test_full_values_fill_gaps_with_the_program_default_then_the_minimum(
     }
 
 
+def test_full_values_use_the_option_default_before_the_minimum(entities: Entities) -> None:
+    # A hood's fan speed options carry a default of 0 on the option itself, not per program.
+    option_default = 300
+    entities.apply([{"uid": FINISH_IN, "default": option_default}])
+    assert program(entities, BAKE).full_option_values()[FINISH_IN] == option_default
+
+
 def test_locked(entities: Entities) -> None:
     duration = option(entities, DURATION)
     assert duration.lockable

@@ -549,8 +549,8 @@ class Program:
         """Return a complete option set, for appliances that want every option in a program write.
 
         Starts from the known values, then fills the gaps with this program's own default for
-        the option, then the option's minimum. Options with none of those are left out rather
-        than sent as `null`.
+        the option, then the option's own default, then its minimum. Options with none of those
+        are left out rather than sent as `null`.
         """
         values = self.known_option_values()
         defaults = {s.uid: parse_profile_value(s.default) for s in self.profile.options}
@@ -558,6 +558,8 @@ class Program:
             if option.uid in values:
                 continue
             default = defaults.get(option.uid)
+            if default is None:
+                default = option.default
             if default is not None and self._in_program_range(option, default):
                 values[option.uid] = default
             elif isinstance(option.min, (int, float)) and not isinstance(option.min, bool):

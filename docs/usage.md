@@ -152,7 +152,7 @@ await appliance.start_program(options={"BSH.Common.Option.FinishInRelative": 360
 
 `select_program()` and `start_program()` choose which options to send, following what different appliances need:
 
-- Appliances that want every option with a program (`full_option_set`) get a complete set: known values, then the program's own defaults, then the options' minimums.
+- Appliances that want every option with a program (`full_option_set`) get a complete set: known values, then the program's own defaults, then the options' own defaults, then their minimums.
 - A plain selection goes without options, so the appliance uses its own defaults instead of a value left over from another program.
 - Starting sends the options' last known values, leaving out read-only options, options the appliance doesn't offer at the moment, values outside the program's own range, and a meat probe setpoint with no probe plugged in.
 
