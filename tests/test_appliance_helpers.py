@@ -219,3 +219,12 @@ async def test_cloud_connection(appliance: Appliance, recorder: Recorder) -> Non
     assert appliance.cloud_connected is True
     await appliance.set_cloud_connection(allowed=False)
     assert recorder.sent == [("/ro/values", [{"uid": 0x0003, "value": False}])]
+
+
+async def test_set_values_raw_skips_checks(appliance: Appliance, recorder: Recorder) -> None:
+    appliance.entities.apply([{"uid": BRIGHTNESS, "access": "read"}])
+    await appliance.set_values_raw({LIGHT: 1, BRIGHTNESS: 150})
+    await appliance.set_values_raw({})
+    assert recorder.sent == [
+        ("/ro/values", [{"uid": LIGHT, "value": 1}, {"uid": BRIGHTNESS, "value": 150}])
+    ]

@@ -7,7 +7,7 @@ import pytest
 
 from home_disconnect import session as session_module
 from home_disconnect.appliance import Appliance
-from home_disconnect.entities import Entity
+from home_disconnect.entities import AccessError, Entity
 from home_disconnect.errors import AlreadyConnectedError, ConnectionFailedError
 from home_disconnect.messages import ResponseError
 from home_disconnect.profile import parse_profile
@@ -314,5 +314,19 @@ async def test_connect_twice_raises_without_dropping_the_connection(
             await appliance.connect()
         assert appliance.connected
         assert fake.connections == 1
+    finally:
+        await appliance.close()
+
+
+async def test_get_network_info(client_session: aiohttp.ClientSession, fake: FakeAppliance) -> None:
+    appliance = make_appliance(client_session, fake)
+    await appliance.connect()
+    try:
+        fake.responses["/ni/info"] = {"data": [{"interfaceID": 0, "rssi": -61}]}
+        assert await appliance.get_network_info() == [{"interfaceID": 0, "rssi": -61}]
+        assert appliance.session.network_info == [{"interfaceID": 0, "rssi": -61}]
+        appliance.session.service_versions.pop("ni")
+        with pytest.raises(AccessError, match="no network information"):
+            await appliance.get_network_info()
     finally:
         await appliance.close()

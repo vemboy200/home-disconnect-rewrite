@@ -400,3 +400,21 @@ def test_full_option_set(recorder: Recorder) -> None:
     entities = Entities(parse_profile(neither, FEATURE_MAPPING), recorder)
     assert not entities.full_option_set
     assert not entities.programs[ECO].full_option_set
+
+
+def test_entities_is_a_mapping_of_names(entities: Entities) -> None:
+    assert DOOR in entities
+    assert "Not.There" not in entities
+    assert DOOR in list(entities)
+    assert set(entities.keys()) == set(entities.by_name)
+    assert entities.get(DOOR) is entities[DOOR]
+    assert dict(entities.items())[POWER] is entities[POWER]
+    assert entities.get("Not.There") is None
+
+
+def test_events_are_readable_by_default(entities: Entities) -> None:
+    salt = entities[SALT]
+    assert salt.feature.access is None  # the profile doesn't say
+    assert salt.access is Access.READ
+    salt.update({"access": "none"})
+    assert entities[SALT].access is Access.NONE  # a fresh lookup: mypy keeps the narrowing above

@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -30,7 +31,7 @@ from .messages import Action, Message
 from .profile import FeatureKind
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
+    from collections.abc import Awaitable, Callable, Iterable, Iterator
 
     from .profile import DeviceProfile, Feature, ProgramOption
     from .profile import Program as ProgramProfile
@@ -341,6 +342,10 @@ class Event(Entity):
         """Keep the other entities, to find the acknowledge/reject commands."""
         super().__init__(feature, requester)
         self._entities = entities
+        # Profiles give events no access attribute; they're read-only states. A
+        # /ro/descriptionChange can still change it.
+        if self.access is None:
+            self.access = Access.READ
 
     async def acknowledge(self) -> None:
         """Acknowledge the event on the appliance, as its panel or the app would."""
@@ -609,8 +614,13 @@ _ENTITY_CLASSES: dict[FeatureKind, type[Entity]] = {
 }
 
 
-class Entities:
-    """Every entity and program of one appliance, by UID and by name."""
+class Entities(Mapping[str, Entity]):
+    """Every entity and program of one appliance: a read-only mapping of name to entity.
+
+    `entities["BSH.Common.Status.DoorState"]`, `name in entities`, `entities.get(name)`,
+    and iterating gives the names, like a dict. `by_uid` has the same entities by UID, and
+    `programs` / `programs_by_uid` the programs.
+    """
 
     def __init__(self, profile: DeviceProfile, requester: Requester) -> None:
         """Create the entities for a profile. `requester` sends the writes."""
@@ -637,21 +647,17 @@ class Entities:
             self.programs_by_uid[program.uid] = program
             self.programs[program.name] = program
 
-    def __iter__(self) -> Iterator[Entity]:
-        """Iterate over every entity (programs not included)."""
-        return iter(self.by_uid.values())
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over the entities' names (programs not included)."""
+        return iter(self.by_name)
 
     def __len__(self) -> int:
         """Count the entities."""
-        return len(self.by_uid)
+        return len(self.by_name)
 
     def __getitem__(self, name: str) -> Entity:
         """Look up an entity by name."""
         return self.by_name[name]
-
-    def get(self, name: str) -> Entity | None:
-        """Look up an entity by name, or `None`."""
-        return self.by_name.get(name)
 
     def _of_type[T: Entity](self, kind: type[T]) -> dict[str, T]:
         return {e.name: e for e in self.by_uid.values() if isinstance(e, kind)}

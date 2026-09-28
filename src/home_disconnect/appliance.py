@@ -216,6 +216,21 @@ class Appliance:
             msg = f"{program.name} can't be selected or started (execution {program.execution})"
             raise AccessError(msg)
 
+    async def get_network_info(self) -> list[dict[str, Any]]:
+        """Ask the appliance for its network details again (`/ni/info`).
+
+        One item per interface, e.g. `{"interfaceID": 0, "type": "WiFi", "rssi": -58,
+        "ipV4": {"ipAddress": ...}, ...}`. The handshake already reads it once
+        (`session.network_info`); values like the WiFi signal only change on a new request.
+        Raises `AccessError` for appliances without the `ni` service.
+        """
+        if "ni" not in self.session.service_versions:
+            msg = "This appliance has no network information service"
+            raise AccessError(msg)
+        response = await self.session.request(Message("/ni/info"))
+        self.session.network_info = response.data or []
+        return self.session.network_info
+
     async def set_values(self, values: Mapping[Entity | str | int, Any]) -> None:
         """Write several values in one message, each converted and checked like `set_value()`.
 
@@ -251,6 +266,16 @@ class Appliance:
         `AccessError` on appliances without the `AllowBackendConnection` setting.
         """
         await self._entity_for(ALLOW_BACKEND_CONNECTION).set_value(allowed)
+
+    async def set_values_raw(self, values: Mapping[Entity | str | int, Any]) -> None:
+        """Write several raw values in one message, without converting or checking them.
+
+        For callers that already hold the appliance's raw values (e.g. a color as the
+        appliance encodes it). Prefer `set_values()` otherwise.
+        """
+        data = [{"uid": self._entity_for(key).uid, "value": value} for key, value in values.items()]
+        if data:
+            await self.session.request(Message("/ro/values", Action.POST, data))
 
     async def set_datetime(self, when: datetime) -> None:
         """Set the appliance's clock (`BSH.Common.Setting.ApplianceDateTime`).
