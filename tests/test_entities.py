@@ -417,4 +417,4 @@ def test_events_are_readable_by_default(entities: Entities) -> None:
     assert salt.feature.access is None  # the profile doesn't say
     assert salt.access is Access.READ
     salt.update({"access": "none"})
-    assert salt.access == "none"
+    assert entities[SALT].access is Access.NONE  # a fresh lookup: mypy keeps the narrowing above
