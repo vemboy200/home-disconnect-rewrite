@@ -1,5 +1,8 @@
 import asyncio
 import base64
+import errno
+import os
+import socket
 import ssl
 from collections.abc import AsyncIterator, Awaitable, Callable
 
@@ -174,9 +177,11 @@ async def test_unreachable_host_fails_to_connect(session: aiohttp.ClientSession)
     port = server.port
     await server.close()
     transport = Transport(session, "127.0.0.1", PSK64, IV64, port=port)
-    with pytest.raises(ConnectionFailedError):
+    with pytest.raises(ConnectionFailedError) as raised:
         async with asyncio.timeout(5):
             await transport.connect()
+    assert str(raised.value) == f"Can't connect to {transport.url}: connection refused"
+    assert isinstance(raised.value.__cause__, aiohttp.ClientConnectorError)
 
 
 async def test_send_before_connect_raises(session: aiohttp.ClientSession) -> None:
@@ -212,6 +217,8 @@ async def test_unreachable_tls_is_not_an_authentication_error(
         async with asyncio.timeout(5):
             await transport.connect()
     assert not isinstance(raised.value, AuthenticationError)
+    # aiohttp's own text names the SSL context object; the message shouldn't.
+    assert str(raised.value) == f"Can't connect to {transport.url}: connection refused"
 
 
 async def test_error_inside_receive_is_a_closed_connection(
@@ -239,3 +246,32 @@ async def test_error_inside_receive_is_a_closed_connection(
         assert not transport.connected
     finally:
         await server.close()
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (TimeoutError(), "timed out"),
+        (
+            socket.gaierror(socket.EAI_NONAME, "nodename nor servname provided"),
+            "the host name couldn't be resolved",
+        ),
+        (
+            OSError(errno.EHOSTUNREACH, "Connect call failed"),
+            os.strerror(errno.EHOSTUNREACH).lower(),
+        ),
+        (OSError("Multiple exceptions: ..."), "the connection failed"),
+    ],
+)
+async def test_connect_errors_are_described_briefly(
+    session: aiohttp.ClientSession, monkeypatch: pytest.MonkeyPatch, error: OSError, reason: str
+) -> None:
+    async def fail(*_args: object, **_kwargs: object) -> None:
+        raise error
+
+    transport = Transport(session, "appliance.local", PSK64, IV64)
+    monkeypatch.setattr(session, "ws_connect", fail)
+    with pytest.raises(ConnectionFailedError) as raised:
+        await transport.connect()
+    assert str(raised.value) == f"Can't connect to {transport.url}: {reason}"
+    assert raised.value.__cause__ is error
