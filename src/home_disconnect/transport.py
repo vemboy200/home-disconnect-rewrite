@@ -13,6 +13,8 @@ Either way the payload is JSON text; this module only moves text in and out.
 from __future__ import annotations
 
 import contextlib
+import os
+import socket
 import ssl
 from typing import TYPE_CHECKING
 
@@ -35,6 +37,24 @@ PSK_IDENTITY = "HCCOM_Local_App"
 WEBSOCKET_PATH = "/homeconnect"
 TLS_PORT = 443
 AES_PORT = 80
+
+
+def _reason(err: BaseException) -> str:
+    """Say in a few words why a connect failed.
+
+    aiohttp's own text carries the SSL context's repr and the resolved address, which is noise
+    in a message shown to a user. The original error stays attached as the cause.
+    """
+    if isinstance(err, TimeoutError):
+        return "timed out"
+    if isinstance(err, aiohttp.WSServerHandshakeError):
+        return f"the WebSocket upgrade was answered with HTTP {err.status}"
+    cause = getattr(err, "os_error", None) or err
+    if isinstance(cause, socket.gaierror):
+        return "the host name couldn't be resolved"
+    if isinstance(cause, OSError) and cause.errno is not None:
+        return os.strerror(cause.errno).lower()
+    return "the connection failed"
 
 
 def create_psk_ssl_context(psk: bytes) -> ssl.SSLContext:
@@ -123,9 +143,9 @@ class Transport:
             )
         except (aiohttp.ClientError, OSError, TimeoutError) as err:
             if self._rejected_psk(err):
-                msg = f"{self.url} rejected the key during the TLS handshake: {err}"
+                msg = f"{self.url} rejected the key during the TLS handshake"
                 raise AuthenticationError(msg) from err
-            msg = f"Can't connect to {self.url}: {err}"
+            msg = f"Can't connect to {self.url}: {_reason(err)}"
             raise ConnectionFailedError(msg) from err
 
     def _rejected_psk(self, err: BaseException) -> bool:
