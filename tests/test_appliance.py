@@ -330,3 +330,30 @@ async def test_get_network_info(client_session: aiohttp.ClientSession, fake: Fak
             await appliance.get_network_info()
     finally:
         await appliance.close()
+
+
+async def test_retry_now_reconnects_the_appliance(
+    client_session: aiohttp.ClientSession,
+    fake: FakeAppliance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_module, "RECONNECT_INITIAL_DELAY", 60)
+    reconnecting = asyncio.Event()
+    reconnected = asyncio.Event()
+
+    async def on_state(state: ConnectionState) -> None:
+        if state is ConnectionState.RECONNECTING:
+            reconnecting.set()
+        elif state is ConnectionState.CONNECTED and reconnecting.is_set():
+            reconnected.set()
+
+    appliance = make_appliance(client_session, fake, on_connection_state=on_state)
+    await appliance.connect()
+    try:
+        await fake.drop()
+        await asyncio.wait_for(reconnecting.wait(), 5)
+        appliance.retry_now()
+        await asyncio.wait_for(reconnected.wait(), 5)
+        assert appliance.connected
+    finally:
+        await appliance.close()

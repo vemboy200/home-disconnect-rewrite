@@ -185,6 +185,7 @@ async def on_state(state: ConnectionState) -> None:
 
 - `CONNECTED` is only reported once the appliance's state has been read, including after a reconnect. If that read fails after a reconnect, the connection is dropped and retried rather than showing old values as current.
 - A dropped connection is retried with backoff, from 5 seconds doubling to 5 minutes, until it's back or `close()` is called. Pass `reconnect=False` to handle reconnecting yourself; the state then goes `DISCONNECTED`.
+- `appliance.retry_now()` skips the rest of the current wait and starts the backoff over. Call it when you learn the appliance is back, for example when it announces itself again over mDNS (`_homeconnect._tcp`). Appliances that sleep can refuse connections for hours, so the backoff can be at its 5-minute maximum by the time they wake up.
 - A WebSocket ping goes out after 20 seconds without traffic, and a missing answer counts as a dropped connection.
 - `appliance.connected` is `True` only in `CONNECTED`.
 

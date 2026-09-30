@@ -274,25 +274,25 @@ async def test_reconnect_backs_off_while_the_appliance_is_gone(
 ) -> None:
     monkeypatch.setattr(session_module, "RECONNECT_INITIAL_DELAY", 0.05)
     delays: list[float] = []
-    real_sleep = asyncio.sleep
+    enough = asyncio.Event()
 
-    async def recording_sleep(delay: float) -> None:
-        if delay:  # other code yields with sleep(0); only record the backoff
-            delays.append(delay)
-        await real_sleep(0)
+    async def recording_wait(delay: float) -> bool:
+        delays.append(delay)
+        if len(delays) == 4:  # noqa: PLR2004
+            enough.set()
+        await asyncio.sleep(0)
+        return False
 
     session = make_session(client_session, appliance)
     await session.connect()
     try:
-        monkeypatch.setattr("asyncio.sleep", recording_sleep)
+        monkeypatch.setattr(session, "_wait_to_retry", recording_wait)
         appliance.accepting = False
         await appliance.drop()
-        while len(delays) < 4:  # noqa: PLR2004
-            await real_sleep(0.01)
+        await asyncio.wait_for(enough.wait(), 5)
         assert delays[:4] == [0.05, 0.1, 0.2, 0.4]
         assert session.state is ConnectionState.RECONNECTING
     finally:
-        monkeypatch.setattr("asyncio.sleep", real_sleep)
         await session.close()
     assert session.state.value == "closed"
 
@@ -474,5 +474,88 @@ async def test_unexpected_receive_error_reconnects(
         await asyncio.wait_for(reconnected.wait(), 5)
         assert session.connected
         assert appliance.connections == 2  # noqa: PLR2004
+    finally:
+        await session.close()
+
+
+async def test_retry_now_skips_the_wait(
+    client_session: aiohttp.ClientSession,
+    appliance: FakeAppliance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Fork issue #119: a hob refused connections for hours, then announced itself when it was
+    # turned on; the next attempt shouldn't wait out the backoff.
+    monkeypatch.setattr(session_module, "RECONNECT_INITIAL_DELAY", 60)
+    reconnecting = asyncio.Event()
+    reconnected = asyncio.Event()
+
+    async def on_state(state: ConnectionState) -> None:
+        if state is ConnectionState.RECONNECTING:
+            reconnecting.set()
+        elif state is ConnectionState.CONNECTED and reconnecting.is_set():
+            reconnected.set()
+
+    session = make_session(client_session, appliance, on_state_change=on_state)
+    await session.connect()
+    try:
+        await appliance.drop()
+        await asyncio.wait_for(reconnecting.wait(), 5)
+        session.retry_now()
+        await asyncio.wait_for(reconnected.wait(), 5)
+        assert appliance.connections == 2  # noqa: PLR2004
+    finally:
+        await session.close()
+
+
+async def test_retry_now_starts_the_backoff_over(
+    client_session: aiohttp.ClientSession,
+    appliance: FakeAppliance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_module, "RECONNECT_INITIAL_DELAY", 0.05)
+    delays: list[float] = []
+    enough = asyncio.Event()
+
+    async def recording_wait(delay: float) -> bool:
+        # The third wait is ended by retry_now(); the ones after it start from the beginning.
+        delays.append(delay)
+        if len(delays) == 5:  # noqa: PLR2004
+            enough.set()
+        await asyncio.sleep(0)
+        return len(delays) == 3  # noqa: PLR2004
+
+    session = make_session(client_session, appliance)
+    await session.connect()
+    try:
+        monkeypatch.setattr(session, "_wait_to_retry", recording_wait)
+        appliance.accepting = False
+        await appliance.drop()
+        await asyncio.wait_for(enough.wait(), 5)
+        assert delays[:5] == [0.05, 0.1, 0.2, 0.1, 0.2]
+    finally:
+        await session.close()
+
+
+async def test_retry_now_does_nothing_unless_reconnecting(
+    client_session: aiohttp.ClientSession,
+    appliance: FakeAppliance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_module, "RECONNECT_INITIAL_DELAY", 60)
+    reconnecting = asyncio.Event()
+
+    async def on_state(state: ConnectionState) -> None:
+        if state is ConnectionState.RECONNECTING:
+            reconnecting.set()
+
+    session = make_session(client_session, appliance, on_state_change=on_state)
+    await session.connect()
+    try:
+        session.retry_now()  # connected: nothing to skip, and nothing left over for later
+        await appliance.drop()
+        await asyncio.wait_for(reconnecting.wait(), 5)
+        await asyncio.sleep(0.2)
+        assert session.state is ConnectionState.RECONNECTING
+        assert appliance.connections == 1
     finally:
         await session.close()

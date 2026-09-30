@@ -102,6 +102,7 @@ class Session:
         self._tracker: RequestTracker | None = None
         self._receive_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
+        self._retry_now = asyncio.Event()
         self._closing = False
         self.state = ConnectionState.DISCONNECTED
         self.service_versions: dict[str, int] = {}
@@ -154,6 +155,15 @@ class Session:
         if self._tracker is not None:
             self._tracker.fail_all(ConnectionClosedError(self._transport.close_code))
         await self._set_state(ConnectionState.CLOSED)
+
+    def retry_now(self) -> None:
+        """Skip the wait before the next reconnect attempt and start the backoff over.
+
+        For when something else says the appliance is back, such as it announcing itself on the
+        network again. Does nothing unless the session is reconnecting.
+        """
+        if self.state is ConnectionState.RECONNECTING:
+            self._retry_now.set()
 
     async def drop(self) -> None:
         """Close the current connection without stopping.
@@ -300,7 +310,8 @@ class Session:
     async def _reconnect_loop(self) -> None:
         delay: float = RECONNECT_INITIAL_DELAY
         while not self._closing:
-            await asyncio.sleep(delay)
+            if await self._wait_to_retry(delay):
+                delay = RECONNECT_INITIAL_DELAY
             try:
                 await self._open()
             except (HomeDisconnectError, TimeoutError) as err:
@@ -308,8 +319,21 @@ class Session:
                 _LOGGER.debug("Reconnect failed, retrying in %ss: %s", delay, err)
                 delay = min(delay * 2, RECONNECT_MAX_DELAY)
                 continue
+            # A retry_now() during the successful attempt mustn't cut the next drop's first wait.
+            self._retry_now.clear()
             await self._set_state(ConnectionState.CONNECTED)
             return
+
+    async def _wait_to_retry(self, delay: float) -> bool:
+        """Wait `delay` seconds, or until `retry_now()`. Returns whether `retry_now()` ended it."""
+        try:
+            async with asyncio.timeout(delay):
+                await self._retry_now.wait()
+        except TimeoutError:
+            return False
+        finally:
+            self._retry_now.clear()
+        return True
 
     async def _set_state(self, state: ConnectionState) -> None:
         if state is self.state:
