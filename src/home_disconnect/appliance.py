@@ -379,6 +379,10 @@ class Appliance:
         await self.session.close()
         await self._set_state(ConnectionState.CLOSED)
 
+    def retry_now(self) -> None:
+        """Reconnect now instead of waiting out the backoff. See `Session.retry_now()`."""
+        self.session.retry_now()
+
     async def refresh(self) -> None:
         """Read the appliance's full state again."""
         await self._refresh()
